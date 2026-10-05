@@ -23,7 +23,7 @@ def compute_similarity(original, reconstructed):
 
 class InteractiveViewer:
     """
-    Interactive image viewer with continuous fractional scale adjustments (step = 0.01),
+    Interactive image viewer with continuous fractional scale adjustments (step = 0.001),
     mouse-wheel zoom (centered at cursor), drag-to-pan, view toggling,
     and razor-thin 1-monitor-pixel grid lines rendered directly in screen space.
     """
@@ -31,8 +31,8 @@ class InteractiveViewer:
         self,
         image,
         initial_scale=0.50,
-        step=0.01,
-        down_interp=cv2.INTER_AREA,
+        step=0.001,
+        down_interp=cv2.INTER_NEAREST,
         up_interp=cv2.INTER_NEAREST,
         grid_color=(0, 255, 0),
         grid_alpha=0.5,
@@ -53,8 +53,8 @@ class InteractiveViewer:
         # 0: Original, 1: Reconstructed, 2: Recon + Grid, 3: Orig + Grid
         self.view_mode = 2
         self.view_names = [
-            "Original",
-            "Reconstructed",
+            "Original (Clean)",
+            "Reconstructed (Clean)",
             "Reconstructed with Grid",
             "Original with Grid"
         ]
@@ -92,7 +92,6 @@ class InteractiveViewer:
             self.mse = float(np.mean(diff ** 2))
             self.psnr = float(10.0 * np.log10((255.0 ** 2) / (self.mse + 1e-10)))
 
-        # Base clean image sources: [Original, Reconstructed, Reconstructed, Original]
         self.base_images = [
             self.image,
             self.reconstructed,
@@ -185,7 +184,7 @@ class InteractiveViewer:
         cell_h = self.h / float(self.grid_h)
 
         if self.view_mode in (1, 2) and (self.grid_w < self.w or self.grid_h < self.h):
-            # Direct projection from downscaled pixels to screen pixels:
+            # Direct single-pass projection from downscaled pixels to screen display:
             # Eliminates intermediate quantization artifacts, ensuring EVERY grid cell
             # is mathematically 100% ONE uniform solid color with zero color bleeding!
             x_indices = np.clip(np.floor((np.arange(self.w) * (cw / self.w) + x1) / cell_w).astype(int), 0, self.grid_w - 1)
@@ -235,7 +234,7 @@ class InteractiveViewer:
                 f"MSE: {self.mse:.1f} | "
                 f"View: [{self.view_mode+1}/4] {current_title} | "
                 f"Zoom: {self.zoom:.1f}x | "
-                f"[ [ / ] ] Step: {self.step:+.2f}"
+                f"[ [ / ] ] Step: {self.step:+.3f}"
             )
             cv2.putText(rendered, info, (10, self.h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1, cv2.LINE_AA)
 
@@ -246,9 +245,9 @@ class InteractiveViewer:
         print("\n" + "=" * 75)
         print(" Interactive Pixel Grid Explorer Controls (1px Monitor Grid Edition):")
         print("=" * 75)
-        print(f"  - [ / ] or A / D          : Adjust Scale by step ({self.step:+.2f})")
+        print(f"  - [ / ] or A / D          : Step Scale by {self.step:+.3f}")
         print(f"  - {{ / }} (Shift+[ / ])   : Coarse Step (+/- 0.05)")
-        print(f"  - , / . or < / >          : Fine Step (+/- 0.002)")
+        print(f"  - , / . or < / >          : Fine Step (+/- 0.001)")
         print("  - Mouse Scroll Wheel      : Zoom In / Zoom Out (centered at mouse cursor)")
         print("  - Left Mouse Drag         : Pan around image smoothly")
         print("  - Right Click / 'r'       : Reset zoom & position to 1.0x")
@@ -278,9 +277,9 @@ class InteractiveViewer:
                 self.change_scale(+0.05)
             # Fine step
             elif key in (ord(','), ord('<')):
-                self.change_scale(-0.002)
+                self.change_scale(-0.001)
             elif key in (ord('.'), ord('>')):
-                self.change_scale(+0.002)
+                self.change_scale(+0.001)
             elif key == ord('r'):
                 self.zoom = 1.0
                 self.center_x = self.w / 2.0
@@ -315,14 +314,14 @@ class InteractiveViewer:
         cv2.destroyAllWindows()
 
 
-def run_pixel_explorer(
+def scan_and_explore(
     image_path,
-    initial_scale=0.50,
-    step=0.01,
-    down_interp_name="area",
+    step=0.001,
+    down_interp_name="nearest",
     up_interp_name="nearest",
     grid_color=(0, 255, 0),
-    grid_alpha=0.5
+    grid_alpha=0.5,
+    show_images=True
 ):
     image = cv2.imread(image_path)
     if image is None:
@@ -333,8 +332,7 @@ def run_pixel_explorer(
     print("=" * 75)
     print(f"Loaded image    : '{image_path}'")
     print(f"Resolution      : {w}x{h}")
-    print(f"Initial Scale   : {initial_scale:.3f} (Step: {step:.3f})")
-    print("Grid Rendering  : Screen-Space 1px (Constant razor-thin at all zoom levels)")
+    print(f"Scanning scales with step = {step} down to 1px...")
     print("=" * 75)
 
     interp_map = {
@@ -343,37 +341,98 @@ def run_pixel_explorer(
         "linear": cv2.INTER_LINEAR,
         "cubic": cv2.INTER_CUBIC,
     }
-    down_interp = interp_map.get(down_interp_name.lower(), cv2.INTER_AREA)
+    down_interp = interp_map.get(down_interp_name.lower(), cv2.INTER_NEAREST)
     up_interp = interp_map.get(up_interp_name.lower(), cv2.INTER_NEAREST)
 
-    viewer = InteractiveViewer(
-        image=image,
-        initial_scale=initial_scale,
-        step=step,
-        down_interp=down_interp,
-        up_interp=up_interp,
-        grid_color=grid_color,
-        grid_alpha=grid_alpha
-    )
-    viewer.run()
+    results = []
+    seen_dims = set()
+    current_scale = 1.0 - step
+
+    # Scan down to 1px
+    while current_scale > 0:
+        dw = max(1, int(round(w * current_scale)))
+        dh = max(1, int(round(h * current_scale)))
+
+        if (dw, dh) not in seen_dims:
+            seen_dims.add((dw, dh))
+            downscaled = cv2.resize(image, (dw, dh), interpolation=down_interp)
+            reconstructed = cv2.resize(downscaled, (w, h), interpolation=up_interp)
+
+            metrics = compute_similarity(image, reconstructed)
+            results.append({
+                "scale": current_scale,
+                "dim": (dw, dh),
+                "mse": metrics["mse"],
+                "mae": metrics["mae"],
+                "psnr": metrics["psnr"],
+            })
+
+        if dw <= 1 or dh <= 1:
+            break
+        current_scale -= step
+
+    if not results:
+        print("No valid scales evaluated.")
+        return None
+
+    sorted_by_mse = sorted(results, key=lambda x: x["mse"])
+    best = sorted_by_mse[0]
+
+    print("\n" + "=" * 75)
+    print(f"{'Scale':<15} | {'Dimensions':<14} | {'MSE (lower=better)':<20} | {'PSNR (dB)':<10}")
+    print("-" * 75)
+    for res in sorted_by_mse[:10]:
+        dim_str = f"{res['dim'][0]}x{res['dim'][1]}"
+        scale_str = f"scale {res['scale']:.3f}"
+        print(f"{scale_str:<15} | {dim_str:<14} | {res['mse']:<20.2f} | {res['psnr']:<10.2f}")
+    print("=" * 75)
+
+    print(f"\n[Best Matching Scale Selected] (excluding trivial 1:1 original):")
+    print(f"  Scale                 : {best['scale']:.3f} (Factor: {1.0 / best['scale']:.2f}x)")
+    print(f"  Resolution            : {best['dim'][0]}x{best['dim'][1]}")
+    print(f"  Reconstruction MSE    : {best['mse']:.2f}")
+    print(f"  Reconstruction PSNR   : {best['psnr']:.2f} dB")
+    print("\nOpening Interactive Viewer at best matching scale...")
+
+    if show_images:
+        # Display the original reference image in a separate dedicated window
+        orig_win_name = f"Original Image ({w}x{h})"
+        cv2.namedWindow(orig_win_name, cv2.WINDOW_NORMAL)
+        disp_w = min(1280, w)
+        disp_h = int(disp_w * (h / w))
+        cv2.resizeWindow(orig_win_name, disp_w, disp_h)
+        cv2.imshow(orig_win_name, image)
+
+        viewer = InteractiveViewer(
+            image=image,
+            initial_scale=best["scale"],
+            step=step,
+            down_interp=down_interp,
+            up_interp=up_interp,
+            grid_color=grid_color,
+            grid_alpha=grid_alpha
+        )
+        viewer.run()
+
+    return best
 
 
 if __name__ == '__main__':
     # Hardcoded configuration
     image_path = r"C:\Users\fra-fisso\Downloads\eldenring.jpg"
-    initial_scale = 0.50         # Starting scale (e.g. 0.50 = 360x450)
-    step = 0.01                  # Scale step size (0.01 = 1% resolution per step)
-    down_interp_name = "area"    # 'area' averages pixel blocks cleanly; 'nearest' point-samples
-    up_interp_name = "nearest"   # 'nearest' produces crisp square pixels
+    step = 0.001                 # Scale scan step size (0.001)
+    down_interp_name = "nearest" # 'nearest' or 'area'
+    up_interp_name = "nearest"   # 'nearest'
     grid_color = (0, 255, 0)     # Grid line color (BGR)
     grid_alpha = 0.5             # Grid line transparency (0.0 to 1.0)
+    show_images = True
 
-    run_pixel_explorer(
+    scan_and_explore(
         image_path=image_path,
-        initial_scale=initial_scale,
         step=step,
         down_interp_name=down_interp_name,
         up_interp_name=up_interp_name,
         grid_color=grid_color,
-        grid_alpha=grid_alpha
+        grid_alpha=grid_alpha,
+        show_images=show_images
     )
