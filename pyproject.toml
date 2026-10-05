@@ -1,0 +1,20 @@
+[project]
+name = "telaformer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Francesco Di Monaco", email = "fdimonaco309@hotmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.4.6",
+    "opencv-python>=5.0.0.93",
+]
+
+[project.scripts]
+telaformer = "telaformer:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
