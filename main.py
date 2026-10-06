@@ -157,7 +157,7 @@ def process_image(image_path, k=16, save_output=True, show_images=True):
 
 if __name__ == '__main__':
     # Hardcoded configuration
-    image_path = r"C:\Users\fra-fisso\Downloads\eldenring.jpg"
+    image_path = str(Path(__file__).resolve().parent / "eldenring.jpg")
     k = 10  # Number of palette colors to extract
 
     process_image(image_path=image_path, k=k, save_output=True)

@@ -48,7 +48,8 @@ def quantize_image(image_path, k=5, use_color_set=False):
     cv2.destroyAllWindows()
 
 if __name__ == '__main__':
-    image_path = r"C:\Users\fra-fisso\Downloads\eldenring.jpg"
+    from pathlib import Path
+    image_path = str(Path(__file__).resolve().parent / "eldenring.jpg")
     k = 10
     
     quantize_image(image_path, k)

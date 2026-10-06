@@ -1,3 +1,4 @@
+from pathlib import Path
 import cv2
 import numpy as np
 
@@ -536,7 +537,7 @@ def scan_and_explore(
 
 if __name__ == '__main__':
     # Hardcoded configuration
-    image_path = r"C:\Users\fra-fisso\Downloads\eldenring.jpg"
+    image_path = str(Path(__file__).resolve().parent / "eldenring.jpg")
     up_scale = 3                 # Subpixel upscaling factor (2x for subpixel gradient interpolation)
     down_interp_name = "nearest" # 'nearest' or 'area'
     up_interp_name = "nearest"   # 'nearest'
