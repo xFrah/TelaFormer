@@ -452,6 +452,8 @@ def scan_and_explore(
         )
         viewer.run()
 
+    best["candidates"] = sorted_by_score
+    best["all_candidates"] = sorted_by_score
     return best
 
 
