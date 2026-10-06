@@ -2065,11 +2065,14 @@ class TelaFormerApp(QMainWindow):
             self.stepper.set_mode_chip("Detect Pixel Art", "#0ea5e9")
             self.btn_estimate.setEnabled(True)
             self.navigate_to_step(1)
-            # Auto-run estimation if not yet done
-            if self.downscaled_bgr is None:
+            # Auto-run estimation if no candidates detected yet or downscaled_bgr is missing
+            if not self.detected_candidates or self.downscaled_bgr is None:
                 self.run_estimate()
+            elif self.selected_candidate_idx is not None and 0 <= self.selected_candidate_idx < len(self.detected_candidates):
+                self.on_candidate_chosen(self.selected_candidate_idx)
 
         elif mode == MODE_PIXELATE:
+            self.detected_candidates = []
             self.p2_sidebar.setVisible(False)
             self.p2_mode_controls_stack.setVisible(True)
             self.p2_mode_controls_stack.setCurrentIndex(0)
@@ -2179,6 +2182,21 @@ class TelaFormerApp(QMainWindow):
         self.btn_estimate.setEnabled(True)
 
         candidates = best_result.get("candidates", [best_result])
+        if self.original_image_bgr is not None:
+            orig_h, orig_w = self.original_image_bgr.shape[:2]
+            # Ensure candidates are strictly downscaled pixel grids (never 1.00x original image)
+            valid = [
+                c for c in candidates
+                if c.get("scale", 1.0) < 0.95 and c.get("dim") != (orig_w, orig_h)
+            ]
+            if valid:
+                candidates = valid
+            else:
+                candidates = [
+                    {"dim": (max(4, int(round(orig_w / f))), max(4, int(round(orig_h / f)))), "scale": 1.0 / f, "score": 0.0}
+                    for f in [2, 3, 4]
+                ]
+
         self.detected_candidates = candidates
         self.p2_sidebar.set_candidates(candidates, active_idx=0)
 
@@ -2329,6 +2347,7 @@ class TelaFormerApp(QMainWindow):
             return
 
         orig_h, orig_w = self.original_image_bgr.shape[:2]
+        self.detected_candidates = []
         self.grid_dims = (orig_w, orig_h)
         self.scale_factor = 1.0
         self.downscaled_bgr = self.original_image_bgr.copy()

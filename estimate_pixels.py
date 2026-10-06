@@ -371,15 +371,24 @@ def scan_and_explore(
     results = []
     seen_dims = set()
 
-    # 2. Fast scan stepping smaller dimension down to 1px with perfect aspect ratio
-    for d in range(smaller_dim, 0, -dim_step):
-        # Aspect ratio check: if not maintained perfectly, don't even try it!
-        if (d * other_dim) % smaller_dim != 0:
-            continue
+    # 2. Fast scan stepping smaller dimension down with aspect ratio preservation
+    # Exclude scale >= 0.95 (1.00x is the original image, not a downscaled pixel art grid)
+    min_d = max(4, dim_step)
+    max_d = min(smaller_dim - 1, int(round(smaller_dim * 0.95)))
 
-        other_d = (d * other_dim) // smaller_dim
+    for d in range(max_d, min_d - 1, -dim_step):
+        if (d * other_dim) % smaller_dim == 0:
+            other_d = (d * other_dim) // smaller_dim
+        else:
+            other_d = int(round(d * other_dim / float(smaller_dim)))
+            aspect_err = abs(other_d / float(d) - other_dim / float(smaller_dim)) / (other_dim / float(smaller_dim))
+            if aspect_err > 0.015:
+                continue
+
         gw, gh = (d, other_d) if smaller_is_w else (other_d, d)
         current_scale = d / float(smaller_dim)
+        if current_scale >= 0.95 or (gw >= w and gh >= h):
+            continue
 
         if (gw, gh) not in seen_dims:
             seen_dims.add((gw, gh))
@@ -406,8 +415,12 @@ def scan_and_explore(
                 results.append({"scale": current_scale, "dim": (gw, gh), "score": score, "b_mean": b_mean, "boundary_pixels": boundary_pixels})
 
     if not results:
-        print("No valid scales evaluated.")
-        return None
+        # Fallback to standard integer factors if no dimensions passed
+        for factor in [2, 3, 4, 5, 8]:
+            gw = max(4, int(round(w / factor)))
+            gh = max(4, int(round(h / factor)))
+            sc = 1.0 / factor
+            results.append({"scale": sc, "dim": (gw, gh), "score": 0.0, "b_mean": 0.0, "boundary_pixels": 0.0})
 
     # Global maximum score is the best grid
     sorted_by_score = sorted(results, key=lambda x: x["score"], reverse=True)
