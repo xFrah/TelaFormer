@@ -16,7 +16,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QImage, QPixmap, QPainter, QColor, QPen, QBrush, QFont,
-    QCursor, QAction, QPainterPath
+    QCursor, QAction, QPainterPath, QIcon
 )
 
 from estimate_pixels import scan_and_explore
@@ -1245,7 +1245,14 @@ class StudioStepper(QFrame):
 class TelaFormerApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TelaFormer Pro — Pixel Art Digitizer Studio")
+        self.setWindowTitle("TelaFormer")
+        base_dir = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
+        icon_path = base_dir / "icon.png"
+        if not icon_path.exists():
+            icon_path = Path(__file__).resolve().parent / "icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
         self.setMinimumSize(980, 750)
         self.resize(1140, 860)
         self.setAcceptDrops(True)
@@ -2116,11 +2123,6 @@ class TelaFormerApp(QMainWindow):
         )
         if path:
             self.load_image_from_path(path)
-
-    def load_sample_image(self):
-        sample_path = Path(__file__).resolve().parent / "eldenring.jpg"
-        if sample_path.exists():
-            self.load_image_from_path(str(sample_path))
 
     def load_image_from_path(self, path):
         img = cv2.imread(path)
