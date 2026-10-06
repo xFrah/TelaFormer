@@ -10,16 +10,18 @@ class InteractiveViewer:
     mouse-wheel zoom (centered at cursor), drag-to-pan, view toggling,
     and razor-thin 1-monitor-pixel grid lines rendered directly in screen space.
     """
+
     def __init__(
         self,
         image,
+        results=None,
         initial_scale=0.50,
         step=1,
         down_interp=cv2.INTER_NEAREST,
         up_interp=cv2.INTER_NEAREST,
         grid_color=(0, 255, 0),
         grid_alpha=0.5,
-        window_name="TelaFormer - Interactive Pixel Grid Explorer"
+        window_name="TelaFormer - Interactive Pixel Grid Explorer",
     ):
         self.image = image
         self.h, self.w = image.shape[:2]
@@ -28,6 +30,7 @@ class InteractiveViewer:
         self.grid_color = grid_color
         self.grid_alpha = grid_alpha
         self.window_name = window_name
+        self.results_map = {r['scale']: r['score'] for r in results} if results else {}
 
         # Precompute all integer grid dimensions (gw, gh) that maintain aspect ratio perfectly
         if self.w <= self.h:
@@ -54,12 +57,7 @@ class InteractiveViewer:
 
         # 0: Original, 1: Reconstructed, 2: Recon + Grid, 3: Orig + Grid
         self.view_mode = 2
-        self.view_names = [
-            "Original (Clean)",
-            "Reconstructed (Clean)",
-            "Reconstructed with Grid",
-            "Original with Grid"
-        ]
+        self.view_names = ["Original (Clean)", "Reconstructed (Clean)", "Reconstructed with Grid", "Original with Grid"]
 
         self.zoom = 1.0
         self.center_x = self.w / 2.0
@@ -86,12 +84,7 @@ class InteractiveViewer:
             self.downscaled = cv2.resize(self.image, (self.grid_w, self.grid_h), interpolation=self.down_interp)
             self.reconstructed = cv2.resize(self.downscaled, (self.w, self.h), interpolation=self.up_interp)
 
-        self.base_images = [
-            self.image,
-            self.reconstructed,
-            self.reconstructed,
-            self.image
-        ]
+        self.base_images = [self.image, self.reconstructed, self.reconstructed, self.image]
 
     def step_dim(self, delta_steps):
         new_idx = int(np.clip(self.dim_idx + delta_steps, 0, len(self.valid_dims) - 1))
@@ -101,7 +94,8 @@ class InteractiveViewer:
             self._recompute_scale()
             self.update_display()
             factor_str = f"{1.0 / self.scale:.2f}x"
-            print(f"Scale: {self.scale:.3f} ({factor_str}) | Grid: {self.grid_w}x{self.grid_h}")
+            score_str = f" | Score: {self.results_map.get(self.scale, 0.0):.1f}" if getattr(self, 'results_map', None) else ""
+            print(f"Scale: {self.scale:.3f} ({factor_str}) | Grid: {self.grid_w}x{self.grid_h}{score_str}")
 
     def change_scale(self, delta):
         target_scale = self.scale + delta
@@ -113,7 +107,8 @@ class InteractiveViewer:
             self._recompute_scale()
             self.update_display()
             factor_str = f"{1.0 / self.scale:.2f}x"
-            print(f"Scale: {self.scale:.3f} ({factor_str}) | Grid: {self.grid_w}x{self.grid_h}")
+            score_str = f" | Score: {self.results_map.get(self.scale, 0.0):.1f}" if getattr(self, 'results_map', None) else ""
+            print(f"Scale: {self.scale:.3f} ({factor_str}) | Grid: {self.grid_w}x{self.grid_h}{score_str}")
 
     def _mouse_callback(self, event, x, y, flags, param):
         crop_w = self.w / self.zoom
@@ -230,13 +225,14 @@ class InteractiveViewer:
 
         if self.show_hud:
             hud_h = 36
-            hud_bg = rendered[self.h - hud_h:self.h, 0:self.w].copy()
+            hud_bg = rendered[self.h - hud_h : self.h, 0 : self.w].copy()
             cv2.rectangle(hud_bg, (0, 0), (self.w, hud_h), (20, 20, 20), -1)
-            cv2.addWeighted(hud_bg, 0.75, rendered[self.h - hud_h:self.h, 0:self.w], 0.25, 0, rendered[self.h - hud_h:self.h, 0:self.w])
+            cv2.addWeighted(hud_bg, 0.75, rendered[self.h - hud_h : self.h, 0 : self.w], 0.25, 0, rendered[self.h - hud_h : self.h, 0 : self.w])
 
             factor_val = 1.0 / max(1e-5, self.scale)
+            score_str = f" | Score: {self.results_map.get(self.scale, 0.0):.0f}" if getattr(self, 'results_map', None) else ""
             info = (
-                f"Scale: {self.scale:.3f} ({factor_val:.2f}x) | "
+                f"Scale: {self.scale:.3f} ({factor_val:.2f}x){score_str} | "
                 f"Grid: {self.grid_w}x{self.grid_h} | "
                 f"View: [{self.view_mode+1}/4] {current_title} | "
                 f"Zoom: {self.zoom:.1f}x | "
@@ -269,38 +265,38 @@ class InteractiveViewer:
 
         while True:
             key = cv2.waitKey(20) & 0xFF
-            if key in (ord('q'), 27):
+            if key in (ord("q"), 27):
                 break
             # Step adjustment
-            elif key in (ord('['), ord('a')):
+            elif key in (ord("["), ord("a")):
                 self.step_dim(-1)
-            elif key in (ord(']'), ord('d')):
+            elif key in (ord("]"), ord("d")):
                 self.step_dim(+1)
             # Coarse step
-            elif key in (ord('{'), ord('A')):
+            elif key in (ord("{"), ord("A")):
                 self.step_dim(-5)
-            elif key in (ord('}'), ord('D')):
+            elif key in (ord("}"), ord("D")):
                 self.step_dim(+5)
             # Fine step
-            elif key in (ord(','), ord('<')):
+            elif key in (ord(","), ord("<")):
                 self.step_dim(-1)
-            elif key in (ord('.'), ord('>')):
+            elif key in (ord("."), ord(">")):
                 self.step_dim(+1)
-            elif key == ord('r'):
+            elif key == ord("r"):
                 self.zoom = 1.0
                 self.center_x = self.w / 2.0
                 self.center_y = self.h / 2.0
                 self.update_display()
-            elif key in (ord('+'), ord('=')):
+            elif key in (ord("+"), ord("=")):
                 self.zoom_at(1.25, self.center_x, self.center_y, self.w / 2, self.h / 2)
                 self.update_display()
-            elif key in (ord('-'), ord('_')):
+            elif key in (ord("-"), ord("_")):
                 self.zoom_at(0.8, self.center_x, self.center_y, self.w / 2, self.h / 2)
                 self.update_display()
-            elif key == ord(' '):
+            elif key == ord(" "):
                 self.view_mode = (self.view_mode + 1) % len(self.base_images)
                 self.update_display()
-            elif key == ord('g'):
+            elif key == ord("g"):
                 if self.view_mode == 1:
                     self.view_mode = 2
                 elif self.view_mode == 2:
@@ -310,25 +306,18 @@ class InteractiveViewer:
                 elif self.view_mode == 3:
                     self.view_mode = 0
                 self.update_display()
-            elif key == ord('h'):
+            elif key == ord("h"):
                 self.show_hud = not self.show_hud
                 self.update_display()
-            elif ord('1') <= key <= ord('4'):
-                self.view_mode = key - ord('1')
+            elif ord("1") <= key <= ord("4"):
+                self.view_mode = key - ord("1")
                 self.update_display()
 
         cv2.destroyAllWindows()
 
 
 def scan_and_explore(
-    image_path,
-    step=None,
-    up_scale=2,
-    down_interp_name="nearest",
-    up_interp_name="nearest",
-    grid_color=(0, 255, 0),
-    grid_alpha=0.5,
-    show_images=True
+    image_path, step=None, down_interp_name="nearest", up_interp_name="nearest", grid_color=(0, 255, 0), grid_alpha=0.5, show_images=True
 ):
     image = cv2.imread(image_path)
     if image is None:
@@ -352,7 +341,7 @@ def scan_and_explore(
     print("=" * 85)
     print(f"Loaded image    : '{image_path}'")
     print(f"Resolution      : {w}x{h}")
-    print(f"Scanning Method : Option B (Boundary vs. Interior Gradient Ratio with {up_scale}x Subpixel Upscaling)")
+    print(f"Scanning Method : Gradient Boundary Sum (Penalty: 1.0x Mean Gradient)")
     print(f"Step Strategy   : Step smaller dimension ({smaller_name} = {smaller_dim}px down to 1px by {dim_step}px)")
     print(f"Aspect Ratio    : Strictly maintained (skipping combinations that distort aspect ratio)")
     print("=" * 85)
@@ -366,27 +355,23 @@ def scan_and_explore(
     down_interp = interp_map.get(down_interp_name.lower(), cv2.INTER_NEAREST)
     up_interp = interp_map.get(up_interp_name.lower(), cv2.INTER_NEAREST)
 
-    # 1. Upscale by up_scale using bicubic interpolation for continuous subpixel precision
-    w_up = w * up_scale
-    h_up = h * up_scale
+    # 1. Compute original gradient magnitude map (no downscaling/upscaling)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    gray_up = cv2.resize(gray, (w_up, h_up), interpolation=cv2.INTER_CUBIC)
-
-    # 2. Compute subpixel gradient magnitude map
-    gx = cv2.Sobel(gray_up, cv2.CV_32F, 1, 0, ksize=1)
-    gy = cv2.Sobel(gray_up, cv2.CV_32F, 0, 1, ksize=1)
-    grad_mag = np.sqrt(gx ** 2 + gy ** 2)
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=1)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=1)
+    grad_mag = np.sqrt(gx**2 + gy**2)
 
     # Precompute 1D gradient projections
-    col_grad = np.sum(grad_mag, axis=0)  # shape (w_up,)
-    row_grad = np.sum(grad_mag, axis=1)  # shape (h_up,)
-    total_grad = float(np.sum(grad_mag))
-    total_pixels = float(w_up * h_up)
+    col_grad = np.sum(grad_mag, axis=0)  # shape (w,)
+    row_grad = np.sum(grad_mag, axis=1)  # shape (h,)
+
+    mean_grad = float(np.mean(grad_mag))
+    penalty_per_pixel = mean_grad * 1.0  # Baseline is exactly the image mean gradient
 
     results = []
     seen_dims = set()
 
-    # 3. Fast scan stepping smaller dimension down to 1px with perfect aspect ratio
+    # 2. Fast scan stepping smaller dimension down to 1px with perfect aspect ratio
     for d in range(smaller_dim, 0, -dim_step):
         # Aspect ratio check: if not maintained perfectly, don't even try it!
         if (d * other_dim) % smaller_dim != 0:
@@ -399,12 +384,9 @@ def scan_and_explore(
         if (gw, gh) not in seen_dims:
             seen_dims.add((gw, gh))
 
-            cell_w_up = w_up / float(gw)
-            cell_h_up = h_up / float(gh)
-
-            # Subpixel boundary coordinates
-            bx = np.clip(np.round(np.arange(1, gw) * cell_w_up).astype(int), 0, w_up - 1)
-            by = np.clip(np.round(np.arange(1, gh) * cell_h_up).astype(int), 0, h_up - 1)
+            # Boundary coordinates on original image size
+            bx = np.clip(np.round(np.arange(1, gw) * (w / float(gw))).astype(int), 0, w - 1)
+            by = np.clip(np.round(np.arange(1, gh) * (h / float(gh))).astype(int), 0, h - 1)
 
             # Fast 1D summation of boundary gradient
             vert_sum = float(np.sum(col_grad[bx]))
@@ -413,103 +395,46 @@ def scan_and_explore(
             # Subtract intersection double-count
             overlap_sum = float(np.sum(grad_mag[np.ix_(by, bx)])) if len(by) > 0 and len(bx) > 0 else 0.0
             boundary_sum = vert_sum + horiz_sum - overlap_sum
-            boundary_pixels = float(len(bx) * h_up + len(by) * w_up - len(bx) * len(by))
+            boundary_pixels = float(len(bx) * h + len(by) * w - len(bx) * len(by))
 
-            interior_sum = total_grad - boundary_sum
-            interior_pixels = total_pixels - boundary_pixels
-
-            if boundary_pixels > 0 and interior_pixels > 0:
+            if boundary_pixels > 0:
+                # Score is total gradient on boundaries minus a penalty for every boundary pixel
+                # This explicitly penalizes high-resolution grids that place lines on smooth areas
+                score = boundary_sum - penalty_per_pixel * boundary_pixels
                 b_mean = boundary_sum / boundary_pixels
-                i_mean = interior_sum / interior_pixels
-                ratio_score = b_mean / (i_mean + 1e-6)
 
-                results.append({
-                    "scale": current_scale,
-                    "dim": (gw, gh),
-                    "score": ratio_score,
-                    "b_mean": b_mean,
-                    "i_mean": i_mean,
-                })
+                results.append({"scale": current_scale, "dim": (gw, gh), "score": score, "b_mean": b_mean, "boundary_pixels": boundary_pixels})
 
     if not results:
         print("No valid scales evaluated.")
         return None
 
-    # Sort results by scale (descending) to find local peaks across the spectrum
-    results_by_scale = sorted(results, key=lambda x: x["scale"], reverse=True)
-    
-    # Identify local peaks in the gradient ratio curve
-    peaks = []
-    for i in range(len(results_by_scale)):
-        curr_score = results_by_scale[i]["score"]
-        prev_score = results_by_scale[i - 1]["score"] if i > 0 else 0.0
-        next_score = results_by_scale[i + 1]["score"] if i < len(results_by_scale) - 1 else 0.0
-        if curr_score >= prev_score and curr_score >= next_score and curr_score > 1.15:
-            if results_by_scale[i]["scale"] < 0.9999 or len(results_by_scale) == 1:
-                peaks.append(results_by_scale[i])
-
-    # Precompute high-frequency edge energy of original image
-    gy_o, gx_o = np.gradient(gray)
-    gm_o_sum = float(np.sum(np.sqrt(gx_o ** 2 + gy_o ** 2)))
-
-    # Global maximum ratio
+    # Global maximum score is the best grid
     sorted_by_score = sorted(results, key=lambda x: x["score"], reverse=True)
-    global_best = sorted_by_score[0]
-
-    # Fundamental scale is the highest-resolution local peak (highest scale) with strong boundary contrast
-    if peaks:
-        prominent = [p for p in peaks if p["score"] >= 1.25]
-        fundamental_best = prominent[0] if prominent else peaks[0]
-    else:
-        fundamental_best = global_best
-
-    # Find candidate scales around the fundamental frequency (+/- 0.006)
-    neighborhood = [r for r in results if abs(r["scale"] - fundamental_best["scale"]) <= 0.006]
-
-    # Evaluate High-Frequency (HF) detail preservation %
-    eval_set = {r["scale"]: r for r in (sorted_by_score[:10] + neighborhood + [fundamental_best, global_best])}
-    for r in eval_set.values():
-        if "hf_ratio" not in r:
-            dw, dh = r["dim"]
-            down = cv2.resize(image, (dw, dh), interpolation=down_interp)
-            up = cv2.resize(down, (w, h), interpolation=up_interp)
-            up_gray = cv2.cvtColor(up, cv2.COLOR_BGR2GRAY).astype(np.float32)
-            gy_u, gx_u = np.gradient(up_gray)
-            gm_u_sum = float(np.sum(np.sqrt(gx_u ** 2 + gy_u ** 2)))
-            r["hf_ratio"] = float((gm_u_sum / (gm_o_sum + 1e-6)) * 100.0)
-
-    # Among neighborhood candidates, select the one that maximizes high-frequency edge contrast & crispness
-    sharp_candidates = [r for r in neighborhood if r.get("hf_ratio", 0.0) >= 88.0 and r.get("score", 0.0) >= 1.15]
-    if sharp_candidates:
-        # Sort by peak HF detail preservation (highest edge contrast and isotropic square pixels)
-        sharp_best = max(sharp_candidates, key=lambda x: x.get("hf_ratio", 0.0))
-    else:
-        sharp_best = fundamental_best
+    best = sorted_by_score[0]
 
     print("\n" + "=" * 85)
-    print(f"{'Scale':<16} | {'Dimensions':<14} | {'Gradient Ratio':<18} | {'HF Detail %':<14}")
+    print(f"{'Scale':<16} | {'Dimensions':<14} | {'Gradient Score':<18} | {'Avg Grad / Pixel':<14}")
     print("-" * 85)
     for res in sorted_by_score[:10]:
         dim_str = f"{res['dim'][0]}x{res['dim'][1]}"
         factor_str = f"({1.0 / res['scale']:.2f}x)"
         scale_str = f"{res['scale']:.3f} {factor_str}"
-        tag = "  <- [Best Match]" if abs(res["scale"] - sharp_best["scale"]) < 1e-4 else ""
-        print(f"{scale_str:<16} | {dim_str:<14} | {res['score']:<18.3f} | {res.get('hf_ratio', 0.0):<13.1f}%{tag}")
-    
-    # Also ensure best match is printed if not in top 10
-    if sharp_best["scale"] not in [r["scale"] for r in sorted_by_score[:10]]:
-        dim_str = f"{sharp_best['dim'][0]}x{sharp_best['dim'][1]}"
-        factor_str = f"({1.0 / sharp_best['scale']:.2f}x)"
-        scale_str = f"{sharp_best['scale']:.3f} {factor_str}"
-        print(f"{scale_str:<16} | {dim_str:<14} | {sharp_best['score']:<18.3f} | {sharp_best.get('hf_ratio', 0.0):<13.1f}%  <- [Best Match]")
-    print("=" * 85)
+        tag = "  <- [Best Match]" if abs(res["scale"] - best["scale"]) < 1e-4 else ""
+        print(f"{scale_str:<16} | {dim_str:<14} | {res['score']:<18.3f} | {res['b_mean']:<13.1f}{tag}")
 
-    best = sharp_best
+    # Also ensure best match is printed if not in top 10
+    if best["scale"] not in [r["scale"] for r in sorted_by_score[:10]]:
+        dim_str = f"{best['dim'][0]}x{best['dim'][1]}"
+        factor_str = f"({1.0 / best['scale']:.2f}x)"
+        scale_str = f"{best['scale']:.3f} {factor_str}"
+        print(f"{scale_str:<16} | {dim_str:<14} | {best['score']:<18.3f} | {best['b_mean']:<13.1f}  <- [Best Match]")
+    print("=" * 85)
 
     print(f"\n[Best Matching Scale]:")
     print(f"  Scale       : {best['scale']:.3f} (Factor: {1.0 / best['scale']:.2f}x)")
     print(f"  Resolution  : {best['dim'][0]}x{best['dim'][1]}")
-    print(f"  HF Detail   : {best.get('hf_ratio', 0.0):.1f}% preserved")
+    print(f"  Avg Gradient: {best['b_mean']:.2f} per cell boundary pixel")
 
     print(f"\nOpening Interactive Viewer at scale {best['scale']:.3f}...")
 
@@ -523,34 +448,27 @@ def scan_and_explore(
         cv2.imshow(orig_win_name, image)
 
         viewer = InteractiveViewer(
-            image=image,
-            initial_scale=best["scale"],
-            down_interp=down_interp,
-            up_interp=up_interp,
-            grid_color=grid_color,
-            grid_alpha=grid_alpha
+            image=image, results=results, initial_scale=best["scale"], down_interp=down_interp, up_interp=up_interp, grid_color=grid_color, grid_alpha=grid_alpha
         )
         viewer.run()
 
     return best
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Hardcoded configuration
     image_path = str(Path(__file__).resolve().parent / "eldenring.jpg")
-    up_scale = 3                 # Subpixel upscaling factor (2x for subpixel gradient interpolation)
-    down_interp_name = "nearest" # 'nearest' or 'area'
-    up_interp_name = "nearest"   # 'nearest'
-    grid_color = (0, 255, 0)     # Grid line color (BGR)
-    grid_alpha = 0.5             # Grid line transparency (0.0 to 1.0)
+    down_interp_name = "area"  # 'nearest' or 'area'
+    up_interp_name = "nearest"  # 'nearest'
+    grid_color = (0, 255, 0)  # Grid line color (BGR)
+    grid_alpha = 0.5  # Grid line transparency (0.0 to 1.0)
     show_images = True
 
     scan_and_explore(
         image_path=image_path,
-        up_scale=up_scale,
         down_interp_name=down_interp_name,
         up_interp_name=up_interp_name,
         grid_color=grid_color,
         grid_alpha=grid_alpha,
-        show_images=show_images
+        show_images=show_images,
     )
