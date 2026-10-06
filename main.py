@@ -9,7 +9,7 @@ if _WORKSPACE_ROOT not in sys.path:
 import cv2
 import numpy as np
 from estimate_pixels import scan_and_explore
-from kmeans import quantize_colors_kmeans
+from kmeans import quantize_colors_kmeans_lab
 
 
 def create_palette_swatch(centers, swatch_size=48, padding=6, cols=8):
@@ -69,21 +69,20 @@ def process_image(image_path, k=16, save_output=True, show_images=True):
     print(f"Detected True Grid  : {grid_w}x{grid_h} (Scale: {scale:.3f}, {1.0/scale:.2f}x)")
 
     # 3. Downscale original image to the true pixel grid
-    downscaled = cv2.resize(image, (grid_w, grid_h), interpolation=cv2.INTER_NEAREST)
+    # We MUST use INTER_AREA for downscaling. Nearest Neighbor throws away pixels and creates
+    # horrible aliasing/noise when converting a high-res image into a pixel art grid!
+    downscaled = cv2.resize(image, (grid_w, grid_h), interpolation=cv2.INTER_AREA)
 
-    # 4. Extract the SET of unique colors (not the raw pixel list)
+    # 4. Prepare pixels for K-Means
     flat_pixels = downscaled.reshape((-1, 3))
     total_pixel_count = len(flat_pixels)
     
-    unique_colors = np.unique(flat_pixels, axis=0)
-    unique_count = len(unique_colors)
-    print(f"\nStep 2: Extracting unique color set for K-Means...")
-    print(f"Total grid cells    : {total_pixel_count:,}")
-    print(f"Unique colors (Set) : {unique_count:,} (Clustering on the unique set)")
+    print(f"\nStep 2: Preparing pixels for Perceptual K-Means++...")
+    print(f"Total grid cells    : {total_pixel_count:,} (Clustering on the full pixel distribution)")
 
-    # 5. Run K-Means on the unique color set
-    print(f"\nStep 3: Running K-Means clustering (K={k}) on the unique colors...")
-    _, centers = quantize_colors_kmeans(unique_colors, k=k)
+    # 5. Run Perceptual K-Means++ on the full pixel distribution
+    print(f"\nStep 3: Running Perceptual CIELAB K-Means++ (K={k}) on the image pixels...")
+    _, centers = quantize_colors_kmeans_lab(flat_pixels, k=k)
     centers = np.asarray(centers, dtype=np.uint8)
 
     # Sort palette colors by luminance for organized presentation
@@ -108,20 +107,15 @@ def process_image(image_path, k=16, save_output=True, show_images=True):
 
     quantized_grid = centers[nearest_palette_indices].reshape((grid_h, grid_w, 3))
 
-    # 7. Render high-resolution display version with nearest neighbor
-    quantized_display = cv2.resize(quantized_grid, (w, h), interpolation=cv2.INTER_NEAREST)
-
     # 8. Create palette swatch
     palette_swatch = create_palette_swatch(centers, swatch_size=42, padding=6, cols=min(k, 8))
 
     # Optional: Save outputs
     if save_output:
         cv2.imwrite("quantized_grid.png", quantized_grid)
-        cv2.imwrite("quantized_full.png", quantized_display)
         cv2.imwrite("palette_swatch.png", palette_swatch)
         print("\nSaved output files:")
         print(f"  - 'quantized_grid.png' ({grid_w}x{grid_h} native pixel art)")
-        print(f"  - 'quantized_full.png' ({w}x{h} full resolution display)")
         print(f"  - 'palette_swatch.png' (Color palette preview)")
 
     # 9. Display results
@@ -131,17 +125,29 @@ def process_image(image_path, k=16, save_output=True, show_images=True):
         win_quant = f"Quantized Pixel Art ({grid_w}x{grid_h}, K={k})"
         win_palette = f"Discovered Palette (K={k})"
 
-        cv2.namedWindow(win_orig, cv2.WINDOW_NORMAL)
-        cv2.namedWindow(win_quant, cv2.WINDOW_NORMAL)
+        cv2.namedWindow(win_orig, cv2.WINDOW_AUTOSIZE)
+        cv2.namedWindow(win_quant, cv2.WINDOW_AUTOSIZE)
         cv2.namedWindow(win_palette, cv2.WINDOW_AUTOSIZE)
 
-        disp_w = min(1280, w)
-        disp_h = int(disp_w * (h / w))
-        cv2.resizeWindow(win_orig, disp_w, disp_h)
-        cv2.resizeWindow(win_quant, disp_w, disp_h)
+        import ctypes
+        user32 = ctypes.windll.user32
+        screen_h = user32.GetSystemMetrics(1)
+        
+        # Calculate the nearest integer scale multiplier to 90% of screen height
+        scale_factor = max(1, round((screen_h * 0.9) / grid_h))
+        
+        target_w = grid_w * scale_factor
+        target_h = grid_h * scale_factor
 
-        cv2.imshow(win_orig, image)
-        cv2.imshow(win_quant, quantized_display)
+        # Scale the HD original image to match the display window size using Nearest Neighbor
+        disp_orig = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+        
+        # Explicitly upscale the pixel art using Nearest Neighbor. Since scale_factor is an integer,
+        # every pixel scales up perfectly into a crisp NxN block with no distortion.
+        disp_quant = cv2.resize(quantized_grid, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+
+        cv2.imshow(win_orig, disp_orig)
+        cv2.imshow(win_quant, disp_quant)
         cv2.imshow(win_palette, palette_swatch)
 
         cv2.waitKey(0)
@@ -149,7 +155,6 @@ def process_image(image_path, k=16, save_output=True, show_images=True):
 
     return {
         "grid": quantized_grid,
-        "display": quantized_display,
         "palette": centers,
         "dim": (grid_w, grid_h)
     }
