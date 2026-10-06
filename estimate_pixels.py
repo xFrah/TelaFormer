@@ -4,7 +4,8 @@ import numpy as np
 
 class InteractiveViewer:
     """
-    Interactive image viewer with continuous fractional scale adjustments (step = 0.001),
+    Interactive image viewer with discrete aspect-ratio-preserving grid steps,
+    stepping the smaller dimension down to 1 px,
     mouse-wheel zoom (centered at cursor), drag-to-pan, view toggling,
     and razor-thin 1-monitor-pixel grid lines rendered directly in screen space.
     """
@@ -12,7 +13,7 @@ class InteractiveViewer:
         self,
         image,
         initial_scale=0.50,
-        step=0.001,
+        step=1,
         down_interp=cv2.INTER_NEAREST,
         up_interp=cv2.INTER_NEAREST,
         grid_color=(0, 255, 0),
@@ -27,9 +28,28 @@ class InteractiveViewer:
         self.grid_alpha = grid_alpha
         self.window_name = window_name
 
-        self.scale = float(np.clip(initial_scale, 0.001, 1.0))
-        self.step = float(step)
-        self.min_scale = max(1.0 / self.w, 1.0 / self.h)
+        # Precompute all integer grid dimensions (gw, gh) that maintain aspect ratio perfectly
+        if self.w <= self.h:
+            s_dim, o_dim, s_is_w = self.w, self.h, True
+        else:
+            s_dim, o_dim, s_is_w = self.h, self.w, False
+
+        self.valid_dims = []
+        for d in range(1, s_dim + 1):
+            if (d * o_dim) % s_dim == 0:
+                other_d = (d * o_dim) // s_dim
+                gw, gh = (d, other_d) if s_is_w else (other_d, d)
+                sc = d / float(s_dim)
+                self.valid_dims.append((gw, gh, sc))
+
+        if not self.valid_dims:
+            self.valid_dims = [(self.w, self.h, 1.0)]
+
+        # Find initial index closest to initial_scale
+        scales = [v[2] for v in self.valid_dims]
+        self.dim_idx = int(np.argmin([abs(s - initial_scale) for s in scales]))
+        self.grid_w, self.grid_h, self.scale = self.valid_dims[self.dim_idx]
+        self.min_scale = self.valid_dims[0][2]
 
         # 0: Original, 1: Reconstructed, 2: Recon + Grid, 3: Orig + Grid
         self.view_mode = 2
@@ -58,9 +78,6 @@ class InteractiveViewer:
         self._recompute_scale()
 
     def _recompute_scale(self):
-        self.grid_w = max(1, int(round(self.w * self.scale)))
-        self.grid_h = max(1, int(round(self.h * self.scale)))
-
         if self.scale >= 0.9999 or (self.grid_w == self.w and self.grid_h == self.h):
             self.reconstructed = self.image.copy()
             self.downscaled = self.image.copy()
@@ -75,10 +92,23 @@ class InteractiveViewer:
             self.image
         ]
 
+    def step_dim(self, delta_steps):
+        new_idx = int(np.clip(self.dim_idx + delta_steps, 0, len(self.valid_dims) - 1))
+        if new_idx != self.dim_idx:
+            self.dim_idx = new_idx
+            self.grid_w, self.grid_h, self.scale = self.valid_dims[self.dim_idx]
+            self._recompute_scale()
+            self.update_display()
+            factor_str = f"{1.0 / self.scale:.2f}x"
+            print(f"Scale: {self.scale:.3f} ({factor_str}) | Grid: {self.grid_w}x{self.grid_h}")
+
     def change_scale(self, delta):
-        new_scale = float(np.clip(round(self.scale + delta, 4), self.min_scale, 1.0))
-        if new_scale != self.scale:
-            self.scale = new_scale
+        target_scale = self.scale + delta
+        scales = [v[2] for v in self.valid_dims]
+        new_idx = int(np.argmin([abs(s - target_scale) for s in scales]))
+        if new_idx != self.dim_idx:
+            self.dim_idx = new_idx
+            self.grid_w, self.grid_h, self.scale = self.valid_dims[self.dim_idx]
             self._recompute_scale()
             self.update_display()
             factor_str = f"{1.0 / self.scale:.2f}x"
@@ -209,7 +239,7 @@ class InteractiveViewer:
                 f"Grid: {self.grid_w}x{self.grid_h} | "
                 f"View: [{self.view_mode+1}/4] {current_title} | "
                 f"Zoom: {self.zoom:.1f}x | "
-                f"[ [ / ] ] Step: {self.step:+.3f}"
+                f"[ [ / ] ] Step Dim (Strict Aspect Ratio)"
             )
             cv2.putText(rendered, info, (10, self.h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1, cv2.LINE_AA)
 
@@ -220,9 +250,9 @@ class InteractiveViewer:
         print("\n" + "=" * 75)
         print(" Interactive Pixel Grid Explorer Controls (1px Monitor Grid Edition):")
         print("=" * 75)
-        print(f"  - [ / ] or A / D          : Step Scale by {self.step:+.3f}")
-        print(f"  - {{ / }} (Shift+[ / ])   : Coarse Step (+/- 0.05)")
-        print(f"  - , / . or < / >          : Fine Step (+/- 0.001)")
+        print("  - [ / ] or A / D          : Step Grid Dimension (+/- 1 valid step)")
+        print("  - { / } (Shift+[ / ])   : Coarse Step Grid Dimension (+/- 5 valid steps)")
+        print("  - , / . or < / >          : Step Grid Dimension (+/- 1 valid step)")
         print("  - Mouse Scroll Wheel      : Zoom In / Zoom Out (centered at mouse cursor)")
         print("  - Left Mouse Drag         : Pan around image smoothly")
         print("  - Right Click / 'r'       : Reset zoom & position to 1.0x")
@@ -242,19 +272,19 @@ class InteractiveViewer:
                 break
             # Step adjustment
             elif key in (ord('['), ord('a')):
-                self.change_scale(-self.step)
+                self.step_dim(-1)
             elif key in (ord(']'), ord('d')):
-                self.change_scale(+self.step)
+                self.step_dim(+1)
             # Coarse step
             elif key in (ord('{'), ord('A')):
-                self.change_scale(-0.05)
+                self.step_dim(-5)
             elif key in (ord('}'), ord('D')):
-                self.change_scale(+0.05)
+                self.step_dim(+5)
             # Fine step
             elif key in (ord(','), ord('<')):
-                self.change_scale(-0.001)
+                self.step_dim(-1)
             elif key in (ord('.'), ord('>')):
-                self.change_scale(+0.001)
+                self.step_dim(+1)
             elif key == ord('r'):
                 self.zoom = 1.0
                 self.center_x = self.w / 2.0
@@ -291,7 +321,7 @@ class InteractiveViewer:
 
 def scan_and_explore(
     image_path,
-    step=0.001,
+    step=None,
     up_scale=2,
     down_interp_name="nearest",
     up_interp_name="nearest",
@@ -305,11 +335,25 @@ def scan_and_explore(
         return None
 
     h, w = image.shape[:2]
+    if w <= h:
+        smaller_name = "width"
+        smaller_dim = w
+        other_dim = h
+        smaller_is_w = True
+    else:
+        smaller_name = "height"
+        smaller_dim = h
+        other_dim = w
+        smaller_is_w = False
+
+    dim_step = step if (isinstance(step, int) and step >= 1) else 1
+
     print("=" * 85)
     print(f"Loaded image    : '{image_path}'")
     print(f"Resolution      : {w}x{h}")
     print(f"Scanning Method : Option B (Boundary vs. Interior Gradient Ratio with {up_scale}x Subpixel Upscaling)")
-    print(f"Step Size       : {step} (evaluating candidate scales down to 1px)")
+    print(f"Step Strategy   : Step smaller dimension ({smaller_name} = {smaller_dim}px down to 1px by {dim_step}px)")
+    print(f"Aspect Ratio    : Strictly maintained (skipping combinations that distort aspect ratio)")
     print("=" * 85)
 
     interp_map = {
@@ -340,12 +384,16 @@ def scan_and_explore(
 
     results = []
     seen_dims = set()
-    current_scale = 1.0 - step
 
-    # 3. Fast scan over all trial scales
-    while current_scale >= 0.02:
-        gw = max(1, int(round(w * current_scale)))
-        gh = max(1, int(round(h * current_scale)))
+    # 3. Fast scan stepping smaller dimension down to 1px with perfect aspect ratio
+    for d in range(smaller_dim, 0, -dim_step):
+        # Aspect ratio check: if not maintained perfectly, don't even try it!
+        if (d * other_dim) % smaller_dim != 0:
+            continue
+
+        other_d = (d * other_dim) // smaller_dim
+        gw, gh = (d, other_d) if smaller_is_w else (other_d, d)
+        current_scale = d / float(smaller_dim)
 
         if (gw, gh) not in seen_dims:
             seen_dims.add((gw, gh))
@@ -382,10 +430,6 @@ def scan_and_explore(
                     "i_mean": i_mean,
                 })
 
-        if gw <= 1 or gh <= 1:
-            break
-        current_scale -= step
-
     if not results:
         print("No valid scales evaluated.")
         return None
@@ -400,7 +444,8 @@ def scan_and_explore(
         prev_score = results_by_scale[i - 1]["score"] if i > 0 else 0.0
         next_score = results_by_scale[i + 1]["score"] if i < len(results_by_scale) - 1 else 0.0
         if curr_score >= prev_score and curr_score >= next_score and curr_score > 1.15:
-            peaks.append(results_by_scale[i])
+            if results_by_scale[i]["scale"] < 0.9999 or len(results_by_scale) == 1:
+                peaks.append(results_by_scale[i])
 
     # Precompute high-frequency edge energy of original image
     gy_o, gx_o = np.gradient(gray)
@@ -433,7 +478,7 @@ def scan_and_explore(
             r["hf_ratio"] = float((gm_u_sum / (gm_o_sum + 1e-6)) * 100.0)
 
     # Among neighborhood candidates, select the one that maximizes high-frequency edge contrast & crispness
-    sharp_candidates = [r for r in neighborhood if r.get("hf_ratio", 0.0) >= 88.0]
+    sharp_candidates = [r for r in neighborhood if r.get("hf_ratio", 0.0) >= 88.0 and r.get("score", 0.0) >= 1.15]
     if sharp_candidates:
         # Sort by peak HF detail preservation (highest edge contrast and isotropic square pixels)
         sharp_best = max(sharp_candidates, key=lambda x: x.get("hf_ratio", 0.0))
@@ -479,7 +524,6 @@ def scan_and_explore(
         viewer = InteractiveViewer(
             image=image,
             initial_scale=best["scale"],
-            step=step,
             down_interp=down_interp,
             up_interp=up_interp,
             grid_color=grid_color,
@@ -493,8 +537,7 @@ def scan_and_explore(
 if __name__ == '__main__':
     # Hardcoded configuration
     image_path = r"C:\Users\fra-fisso\Downloads\eldenring.jpg"
-    step = 0.001                 # Scale scan step size (0.001)
-    up_scale = 2                 # Subpixel upscaling factor (2x for subpixel gradient interpolation)
+    up_scale = 3                 # Subpixel upscaling factor (2x for subpixel gradient interpolation)
     down_interp_name = "nearest" # 'nearest' or 'area'
     up_interp_name = "nearest"   # 'nearest'
     grid_color = (0, 255, 0)     # Grid line color (BGR)
@@ -503,7 +546,6 @@ if __name__ == '__main__':
 
     scan_and_explore(
         image_path=image_path,
-        step=step,
         up_scale=up_scale,
         down_interp_name=down_interp_name,
         up_interp_name=up_interp_name,
